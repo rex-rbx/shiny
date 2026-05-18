@@ -150,6 +150,13 @@ impl<'a, 'b> Lifter<'a, 'b> {
         }
     }
 
+    fn local(&mut self, register: Register) -> RcLocal {
+        self.locals
+            .entry(register)
+            .or_insert_with(RcLocal::default)
+            .clone()
+    }
+
     // TODO: rename to one of: lift_instructions, lift_range, lift_instruction_range, lift_block?
     fn lift_instruction(&mut self, start: usize, end: usize, statements: &mut Vec<Statement>) {
         if end > start {
@@ -483,9 +490,9 @@ impl<'a, 'b> Lifter<'a, 'b> {
                     object,
                     method,
                 } => {
-                    let destination = self.locals[&destination].clone();
-                    let self_arg = self.locals[&self_arg].clone();
-                    let object = self.locals[&object].clone();
+                    let destination = self.local(destination);
+                    let self_arg = self.local(self_arg);
+                    let object = self.local(object);
                     statements.push(
                         ast::Assign::new(vec![self_arg.into()], vec![object.clone().into()]).into(),
                     );
