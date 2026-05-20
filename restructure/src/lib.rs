@@ -236,9 +236,7 @@ impl GraphStructurer {
                     continue;
                 }
 
-                self.insert_goto_for_edge(edge);
-                self.find_loop_headers();
-                changed = self.match_blocks();
+                changed = self.try_refine_with_edge(edge);
                 if changed {
                     break;
                 }
@@ -251,9 +249,7 @@ impl GraphStructurer {
                     if self.function.graph().edge_weight(edge).is_none() {
                         continue;
                     }
-                    self.insert_goto_for_edge(edge);
-                    self.find_loop_headers();
-                    changed = self.match_blocks();
+                    changed = self.try_refine_with_edge(edge);
                     if changed {
                         break;
                     }
@@ -262,6 +258,23 @@ impl GraphStructurer {
                     break;
                 }
             }
+        }
+    }
+
+    fn try_refine_with_edge(&mut self, edge: EdgeIndex) -> bool {
+        let function_snapshot = self.function.clone();
+        let loop_headers_snapshot = self.loop_headers.clone();
+        let label_to_node_snapshot = self.label_to_node.clone();
+
+        self.insert_goto_for_edge(edge);
+        self.find_loop_headers();
+        if self.match_blocks() {
+            true
+        } else {
+            self.function = function_snapshot;
+            self.loop_headers = loop_headers_snapshot;
+            self.label_to_node = label_to_node_snapshot;
+            false
         }
     }
 
