@@ -1,3 +1,4 @@
+use ast::Reduce;
 use cfg::{block::BranchType, function::Function};
 use itertools::Itertools;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -278,9 +279,105 @@ impl GraphStructurer {
         }
     }
 
+    // Removes `goto lX` where `::lX::` is the immediately next non-comment statement (Pattern A),
+    // and transforms `if cond then goto lX end; [body]; ::lX::` into
+    // `if not cond then [body] end; ::lX::` (Pattern B), recursively in all nested blocks.
+    fn cleanup_goto_in_block(block: &mut ast::Block) {
+        // Apply Pattern A and B to the top-level statements until no more changes occur,
+        // then recurse into nested blocks (including any newly created by Pattern B).
+        loop {
+            let mut changed = false;
+
+            // Pattern A: remove `goto lX` when `::lX::` is the next non-comment statement.
+            let mut i = 0;
+            while i < block.len() {
+                if let ast::Statement::Goto(goto) = &block[i] {
+                    let label = goto.0.clone();
+                    let j = (i + 1..block.len())
+                        .find(|&k| !matches!(block[k], ast::Statement::Comment(_)));
+                    if let Some(j) = j {
+                        if let ast::Statement::Label(l) = &block[j] {
+                            if *l == label {
+                                block.remove(i);
+                                changed = true;
+                                continue;
+                            }
+                        }
+                    }
+                }
+                i += 1;
+            }
+
+            // Pattern B: for each label `::lX::` at position j, find the last
+            // `if cond then goto lX end` (empty else) at position i < j and transform it
+            // to `if not cond then [block[i+1..j]] end`, keeping `::lX::` in place.
+            // Processing from the end ensures multiple gotos to the same label are handled
+            // right-to-left, preventing nested gotos in transformed bodies.
+            'pattern_b: for j in (1..block.len()).rev() {
+                if let Some(label) = block[j].as_label() {
+                    let label = label.clone();
+                    if let Some(i) = (0..j).rev().find(|&i| {
+                        if let Some(if_stat) = block[i].as_if() {
+                            let then_block = if_stat.then_block.lock();
+                            let else_block = if_stat.else_block.lock();
+                            then_block.len() == 1
+                                && else_block.is_empty()
+                                && matches!(
+                                    then_block.first(),
+                                    Some(ast::Statement::Goto(g)) if g.0 == label
+                                )
+                        } else {
+                            false
+                        }
+                    }) {
+                        // Drain the body between the if and the label.
+                        let body: Vec<ast::Statement> = block.drain(i + 1..j).collect();
+                        let if_stat = block.remove(i).into_if().unwrap();
+                        let new_condition =
+                            ast::Unary::new(if_stat.condition, ast::UnaryOperation::Not)
+                                .reduce_condition();
+                        block.insert(
+                            i,
+                            ast::If::new(new_condition, body.into(), ast::Block::default()).into(),
+                        );
+                        changed = true;
+                        break 'pattern_b;
+                    }
+                }
+            }
+
+            if !changed {
+                break;
+            }
+        }
+
+        // Recurse into all nested blocks (including newly created ones from Pattern B).
+        for stmt in block.iter_mut() {
+            match stmt {
+                ast::Statement::If(if_stat) => {
+                    Self::cleanup_goto_in_block(&mut if_stat.then_block.lock());
+                    Self::cleanup_goto_in_block(&mut if_stat.else_block.lock());
+                }
+                ast::Statement::While(w) => {
+                    Self::cleanup_goto_in_block(&mut w.block.lock());
+                }
+                ast::Statement::Repeat(r) => {
+                    Self::cleanup_goto_in_block(&mut r.block.lock());
+                }
+                ast::Statement::NumericFor(f) => {
+                    Self::cleanup_goto_in_block(&mut f.block.lock());
+                }
+                ast::Statement::GenericFor(f) => {
+                    Self::cleanup_goto_in_block(&mut f.block.lock());
+                }
+                _ => {}
+            }
+        }
+    }
+
     fn structure(mut self) -> ast::Block {
         self.collapse();
-        if self.function.graph().node_count() != 1 {
+        let mut result = if self.function.graph().node_count() != 1 {
             let mut res_block = ast::Block::default();
             let entry = self.function.entry().unwrap();
             let mut stack = vec![entry];
@@ -362,7 +459,9 @@ impl GraphStructurer {
                     .remove_block(self.function.entry().unwrap())
                     .unwrap(),
             )
-        }
+        };
+        Self::cleanup_goto_in_block(&mut result);
+        result
     }
 }
 
