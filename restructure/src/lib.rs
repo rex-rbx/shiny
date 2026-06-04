@@ -291,11 +291,11 @@ impl GraphStructurer {
                 }
                 visited.insert(node);
 
-                fn collect_gotos(block: &ast::Block, gotos: &mut FxHashSet<ast::Label>) {
+                fn collect_gotos(block: &ast::Block, gotos: &mut Vec<ast::Label>) {
                     for statement in &block.0 {
                         match statement {
                             ast::Statement::Goto(goto) => {
-                                gotos.insert(goto.0.clone());
+                                gotos.push(goto.0.clone());
                             }
                             ast::Statement::If(r#if) => {
                                 collect_gotos(&r#if.then_block.lock(), gotos);
@@ -319,9 +319,13 @@ impl GraphStructurer {
                 }
 
                 let block = self.function.remove_block(node).unwrap();
-                let mut goto_destinations = FxHashSet::default();
+                let mut goto_destinations = Vec::new();
                 collect_gotos(&block, &mut goto_destinations);
+                let mut seen_goto_destinations = FxHashSet::default();
                 for label in goto_destinations {
+                    if !seen_goto_destinations.insert(label.clone()) {
+                        continue;
+                    }
                     // TODO: block might have been merged/structured into another, output that block instead
                     // will require collecting label definitions in addition to references (gotos)
                     let target_node = self.label_to_node[&label];
