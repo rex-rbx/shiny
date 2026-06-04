@@ -117,6 +117,19 @@ impl super::GraphStructurer {
                     } else {
                         false
                     }
+                } else if self.function.entry() != &Some(target)
+                    && !self.is_loop_header(target)
+                    && !self.is_for_next(target)
+                    && let Some(block) = Self::inlineable_block(self.function.block(target).unwrap())
+                {
+                    let edges = self
+                        .function
+                        .edges(target)
+                        .map(|e| (e.target(), e.weight().clone()))
+                        .collect_vec();
+                    self.function.block_mut(node).unwrap().extend(block.0);
+                    self.function.set_edges(node, edges);
+                    true
                 } else {
                     false
                 }
