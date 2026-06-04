@@ -63,6 +63,29 @@ impl GraphStructurer {
         !block.iter().any(|s| s.as_comment().is_none())
     }
 
+    fn statement_is_inlineable(statement: &ast::Statement) -> bool {
+        matches!(
+            statement,
+            ast::Statement::Empty(_)
+                | ast::Statement::Call(_)
+                | ast::Statement::MethodCall(_)
+                | ast::Statement::Assign(_)
+                | ast::Statement::Return(_)
+                | ast::Statement::Close(_)
+                | ast::Statement::SetList(_)
+                | ast::Statement::Comment(_)
+        )
+    }
+
+    fn inlineable_block(block: &ast::Block) -> Option<ast::Block> {
+        let skip = usize::from(block.first().and_then(|s| s.as_label()).is_some());
+        if block.iter().skip(skip).all(Self::statement_is_inlineable) {
+            Some(block.iter().skip(skip).cloned().collect_vec().into())
+        } else {
+            None
+        }
+    }
+
     fn collect_labels(block: &ast::Block, labels: &mut Vec<ast::Label>) {
         for statement in &block.0 {
             match statement {
@@ -205,6 +228,18 @@ impl GraphStructurer {
             let edges = self.function.remove_edges(target);
             let block = self.function.remove_block(target).unwrap();
             self.remap_labels(&block, source);
+            self.function.block_mut(source).unwrap().extend(block.0);
+            self.function.set_edges(source, edges);
+        } else if self.function.entry() != &Some(target)
+            && !self.is_loop_header(target)
+            && !self.is_for_next(target)
+            && let Some(block) = Self::inlineable_block(self.function.block(target).unwrap())
+        {
+            let edges = self
+                .function
+                .edges(target)
+                .map(|e| (e.target(), e.weight().clone()))
+                .collect_vec();
             self.function.block_mut(source).unwrap().extend(block.0);
             self.function.set_edges(source, edges);
         } else {
@@ -436,5 +471,57 @@ mod tests {
             structurer.label_to_node.get(&ast::Label::from("inner")).copied(),
             Some(node)
         );
+    }
+
+    #[test]
+    fn inlineable_block_strips_leading_label() {
+        let block = ast::Block::from(vec![
+            ast::Label::from("target").into(),
+            ast::Assign::new(
+                vec![ast::RcLocal::default().into()],
+                vec![ast::Literal::Boolean(true).into()],
+            )
+            .into(),
+        ]);
+
+        let inlineable = GraphStructurer::inlineable_block(&block).unwrap();
+        assert!(inlineable.first().and_then(|s| s.as_label()).is_none());
+        assert!(matches!(inlineable.last(), Some(ast::Statement::Assign(_))));
+    }
+
+    #[test]
+    fn match_jump_inlines_simple_target_blocks() {
+        let mut function = Function::new(0);
+        let source = function.new_block();
+        let target = function.new_block();
+        let other_pred = function.new_block();
+
+        function.set_entry(source);
+        function.block_mut(target).unwrap().push(
+            ast::Assign::new(
+                vec![ast::RcLocal::default().into()],
+                vec![ast::Literal::Boolean(true).into()],
+            )
+            .into(),
+        );
+        function.block_mut(target).unwrap().push(ast::Return::new(vec![]).into());
+
+        function.set_edges(
+            source,
+            vec![(target, cfg::block::BlockEdge::new(cfg::block::BranchType::Unconditional))],
+        );
+        function.set_edges(
+            other_pred,
+            vec![(target, cfg::block::BlockEdge::new(cfg::block::BranchType::Unconditional))],
+        );
+
+        let mut structurer = GraphStructurer::new(function);
+        assert!(structurer.match_jump(source, Some(target)));
+
+        let source_block = structurer.function.block(source).unwrap();
+        assert_eq!(source_block.len(), 2);
+        assert!(source_block.iter().all(|s| s.as_goto().is_none()));
+        assert!(matches!(source_block.last(), Some(ast::Statement::Return(_))));
+        assert!(structurer.function.has_block(target));
     }
 }
