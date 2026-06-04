@@ -102,12 +102,15 @@ impl GraphStructurer {
                     vec![ast::Break {}.into()].into()
                 } else {
                     let mut body_ast = self.function.remove_block(then_node).unwrap();
+                    self.remap_labels(&body_ast, init_block);
                     body_ast.extend(statements.iter().cloned());
                     if !matches!(body_ast.last(), Some(ast::Statement::Return(_))) {
                         body_ast.push(ast::Break {}.into());
                     }
                     body_ast
                 };
+                let header_labels: ast::Block = statements.clone().into();
+                self.remap_labels(&header_labels, init_block);
                 let init_ast = &mut self.function.block_mut(init_block).unwrap();
                 init_ast.extend(statements);
                 let new_stat = match statement {
@@ -427,6 +430,7 @@ impl GraphStructurer {
                     let while_stat = if !self.function.block_mut(header).unwrap().is_empty() {
                         let mut body_block =
                             std::mem::take(self.function.block_mut(header).unwrap());
+                        self.remap_labels(&block, header);
                         if header_else_target != body {
                             // TODO: is this correct?
                             if_condition = ast::Unary::new(if_condition, ast::UnaryOperation::Not)
@@ -468,7 +472,10 @@ impl GraphStructurer {
                     let (init_block, init_index) = self.find_for_init(header);
 
                     let mut body_ast = self.function.remove_block(body).unwrap();
+                    self.remap_labels(&body_ast, init_block);
                     body_ast.extend(statements.iter().cloned());
+                    let header_labels: ast::Block = statements.clone().into();
+                    self.remap_labels(&header_labels, init_block);
                     let init_ast = &mut self.function.block_mut(init_block).unwrap();
                     init_ast.extend(statements);
                     let new_stat = match statement {
@@ -523,8 +530,8 @@ impl GraphStructurer {
                 .is_ok_and(|s| s == header)
         {
             let block = self.function.remove_block(body).unwrap();
-
             let mut body_block = std::mem::take(self.function.block_mut(header).unwrap());
+            self.remap_labels(&block, header);
             body_block.extend(block.0);
 
             self.function

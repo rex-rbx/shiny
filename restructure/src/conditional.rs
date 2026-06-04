@@ -147,6 +147,8 @@ impl GraphStructurer {
         let then_block = self.function.remove_block(then_node).unwrap();
         let else_block = self.function.remove_block(else_node).unwrap();
 
+        self.remap_labels(&then_block, entry);
+        self.remap_labels(&else_block, entry);
         let block = self.function.block_mut(entry).unwrap();
         // TODO: STYLE: rename to r#if?
         let if_stat = block.last_mut().unwrap().as_if_mut().unwrap();
@@ -204,6 +206,7 @@ impl GraphStructurer {
             }
 
             let then_block = self.function.remove_block(then_node).unwrap();
+            self.remap_labels(&then_block, entry);
 
             let block = self.function.block_mut(entry).unwrap();
             let if_stat = block.last_mut().unwrap().as_if_mut().unwrap();

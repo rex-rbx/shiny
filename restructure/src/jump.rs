@@ -92,6 +92,7 @@ impl super::GraphStructurer {
                     {
                         let edges = self.function.remove_edges(target);
                         let block = self.function.remove_block(target).unwrap();
+                        self.remap_labels(&block, node);
                         self.function.block_mut(node).unwrap().extend(block.0);
                         self.function.set_edges(node, edges);
                         true
@@ -109,6 +110,7 @@ impl super::GraphStructurer {
                             self.try_remove_unnecessary_condition(source);
                         }
                         let mut block = self.function.remove_block(node).unwrap();
+                        self.remap_labels(&block, target);
                         block.extend(std::mem::take(self.function.block_mut(target).unwrap()).0);
                         *self.function.block_mut(target).unwrap() = block;
                         true
