@@ -63,6 +63,39 @@ impl GraphStructurer {
         !block.iter().any(|s| s.as_comment().is_none())
     }
 
+    fn collect_labels(block: &ast::Block, labels: &mut Vec<ast::Label>) {
+        for statement in &block.0 {
+            match statement {
+                ast::Statement::Label(label) => labels.push(label.clone()),
+                ast::Statement::If(r#if) => {
+                    Self::collect_labels(&r#if.then_block.lock(), labels);
+                    Self::collect_labels(&r#if.else_block.lock(), labels);
+                }
+                ast::Statement::While(r#while) => {
+                    Self::collect_labels(&r#while.block.lock(), labels);
+                }
+                ast::Statement::Repeat(repeat) => {
+                    Self::collect_labels(&repeat.block.lock(), labels);
+                }
+                ast::Statement::NumericFor(numeric_for) => {
+                    Self::collect_labels(&numeric_for.block.lock(), labels);
+                }
+                ast::Statement::GenericFor(generic_for) => {
+                    Self::collect_labels(&generic_for.block.lock(), labels);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn remap_labels(&mut self, block: &ast::Block, node: NodeIndex) {
+        let mut labels = Vec::new();
+        Self::collect_labels(block, &mut labels);
+        for label in labels {
+            self.label_to_node.insert(label, node);
+        }
+    }
+
     fn try_match_pattern(
         &mut self,
         node: NodeIndex,
@@ -171,6 +204,7 @@ impl GraphStructurer {
             // TODO: this code is repeated in match_jump, move to a new function
             let edges = self.function.remove_edges(target);
             let block = self.function.remove_block(target).unwrap();
+            self.remap_labels(&block, source);
             self.function.block_mut(source).unwrap().extend(block.0);
             self.function.set_edges(source, edges);
         } else {
@@ -372,4 +406,35 @@ impl GraphStructurer {
 
 pub fn lift(function: cfg::function::Function) -> ast::Block {
     GraphStructurer::new(function).structure()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn remap_labels_recurses_into_nested_blocks() {
+        let mut function = Function::new(0);
+        let node = function.new_block();
+        function.set_entry(node);
+
+        let mut inner_block = ast::Block::default();
+        inner_block.push(ast::Label::from("inner").into());
+        let outer_block = ast::Block::from(vec![
+            ast::If::new(
+                ast::Literal::Boolean(true).into(),
+                inner_block,
+                ast::Block::default(),
+            )
+            .into(),
+        ]);
+
+        let mut structurer = GraphStructurer::new(function);
+        structurer.remap_labels(&outer_block, node);
+
+        assert_eq!(
+            structurer.label_to_node.get(&ast::Label::from("inner")).copied(),
+            Some(node)
+        );
+    }
 }
