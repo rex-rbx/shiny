@@ -35,7 +35,7 @@ impl fmt::Display for Global {
         } else {
             write!(
                 f,
-                "__FENV[\"{}\"]",
+                "getfenv()[\"{}\"]",
                 Formatter::<fmt::Formatter>::escape_string(&self.0)
             )
         }
