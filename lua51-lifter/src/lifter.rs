@@ -150,6 +150,24 @@ impl<'a, 'b> Lifter<'a, 'b> {
         }
     }
 
+    fn global_rvalue(&mut self, constant: Constant) -> ast::RValue {
+        let key = self.constant(constant);
+        if let Some(global_name) = key.as_string() {
+            ast::Global::new(global_name.clone()).into()
+        } else {
+            ast::Index::new(ast::Global::new(b"_G".to_vec()).into(), key.into()).into()
+        }
+    }
+
+    fn global_lvalue(&mut self, constant: Constant) -> ast::LValue {
+        let key = self.constant(constant);
+        if let Some(global_name) = key.as_string() {
+            ast::Global::new(global_name.clone()).into()
+        } else {
+            ast::Index::new(ast::Global::new(b"_G".to_vec()).into(), key.into()).into()
+        }
+    }
+
     fn local(&mut self, register: Register) -> RcLocal {
         self.locals
             .entry(register)
@@ -217,20 +235,18 @@ impl<'a, 'b> Lifter<'a, 'b> {
                     destination,
                     global,
                 } => {
-                    let global_str = self.constant(global).as_string().unwrap().clone();
                     statements.push(
                         ast::Assign::new(
                             vec![self.locals[&destination].clone().into()],
-                            vec![ast::Global::new(global_str).into()],
+                            vec![self.global_rvalue(global)],
                         )
                         .into(),
                     );
                 }
                 &Instruction::SetGlobal { destination, value } => {
-                    let global_str = self.constant(destination).as_string().unwrap().clone();
                     statements.push(
                         ast::Assign::new(
-                            vec![ast::Global::new(global_str).into()],
+                            vec![self.global_lvalue(destination)],
                             vec![self.locals[&value].clone().into()],
                         )
                         .into(),
